@@ -1,0 +1,10 @@
+{
+    "dead_time": 0.002,
+    "search_range": 0.002,
+    "cutoff": 4.0,
+    "tag": "spike detection",
+    "progress_bar": false,
+    "units": "sec",
+    "return_neotype": false,
+    "num_proc": 1
+}
