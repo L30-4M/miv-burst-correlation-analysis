@@ -60,52 +60,46 @@ data = dataset[0]
 
 spike_detection: Operator = ThresholdCutoff(cutoff=4.0, dead_time=0.002)
 data >> spike_detection
-spikestamps = spike_detection.output
-
+goog = spike_detection.output
+spikestamps = goog.select([1,3,5,7,9,11,13,15,17,19], keepdims=False)
+CHAMOUNT = 10
 # THIS IS ROUGH OUTLINE FOR HOW C_XY IS CONSTRUCTED
 #t_start = spikestamps.get_first_spikestamp()
 #t_end = spikestamps.get_last_spikestamp()
 #for j, timestamp in enumerate(temp3[i]):
 
-def array_to_dict(dict, array, X) :
-    for Y, value in enumerate(array) :
-        dict[(X,Y)] = dict[(X,Y)] + value[:30]
+#CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+C_XY = [[[0 for _ in range(30)] for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
 
-C_XY = {}
-CI_XY = [[0.0 for _ in range(60)] for _ in range(60)]
-for i in range(60):
-    for j in range(60):
-        C_XY[(i,j)] = [0 for _ in range(30)]
-
-
-for i in range(60):
-    X = spikestamps.select([i])
-    X_neo = X.neo()
-    number_of_spikes = len(X_neo[i])
-    for timestamp in X_neo[i]:
+for X in range(CHAMOUNT):
+    Xtrain = spikestamps.select([X])
+    X_neo = Xtrain.neo()
+    number_of_spikes = len(X_neo[X])
+    for timestamp in X_neo[X]:
         time = timestamp.magnitude.item()
-        Ys = X.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data
+        Ys = Xtrain.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data
         Ys_normalized = Ys/(number_of_spikes*0.01)
-        array_to_dict(C_XY, Ys_normalized, i)
+        ddd = np.rot90(Ys_normalized, -1)
+        for Y in range(CHAMOUNT) :
+            C_XY[X][Y] += ddd[Y][:30]
 
+# Assuming you have already computed the values of C_XY
 
+# Create subplots for each X, Y combination
+fig, axs = plt.subplots(10, 10, figsize=(20, 20))
 
-C_X = [[] for _ in range(60)]
-for X in range(60) : 
-    C_X[X] = C_XY[(X,0)]  
-    for Y in range(1,60) :
-        C_X[X] += C_XY[(X,Y)]
-    #Add 1/N-1 step
-#Bug here for the X=0 case
+# Iterate over each X, Y combination
+for X in range(10):
+    for Y in range(10):
+        # Plot the values of C_XY for current X, Y combination
+        axs[X, Y].plot(C_XY[X][Y])
+        axs[X, Y].set_title(f'X={X}, Y={Y}')
+        axs[X, Y].set_xlabel('Time')
+        axs[X, Y].set_ylabel('Value')
 
-# CI
-# We look at the first bin and sum the C_XY value in that first bin through all the channels.
-# Notation is a bit confusing since it implies that we are summing though a range of time.
+# Adjust spacing between subplots
+plt.tight_layout()
 
+# Show the plot
+plt.show()
 
-for X in range(40) :
-    teA = np.sum(C_X[X])
-    for Y in range(40) :
-        te = C_XY[(X,Y)]
-        CI = te[0]/np.sum(teA)
-        CI_XY[X][Y] = CI
