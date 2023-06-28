@@ -88,6 +88,8 @@ for i in range(60):
         Ys_normalized = Ys/(number_of_spikes*0.01)
         array_to_dict(C_XY, Ys_normalized, i)
 
+
+
 C_X = [[] for _ in range(60)]
 for X in range(60) : 
     C_X[X] = C_XY[(X,0)]  
@@ -106,16 +108,4 @@ for X in range(40) :
     for Y in range(40) :
         te = C_XY[(X,Y)]
         CI = te[0]/np.sum(teA)
-        CI_XY[X][Y] = CI
-        
-import matplotlib.pyplot as plt
-import numpy as np
-
-CI_XY = np.zeros((40, 40))  # Initialize CI_XY array
-
-for X in range(40):
-    teA = np.sum(C_X[X])
-    for Y in range(40):
-        te = C_XY[(X, Y)]
-        CI = te[0] / np.sum(teA)
         CI_XY[X][Y] = CI
