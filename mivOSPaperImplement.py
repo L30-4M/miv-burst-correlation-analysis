@@ -24,7 +24,7 @@ data = dataset[0]
 
 
 # Calculate SD of biological noise than set cutoff to be 7 times that.
-# 0 Indicates a temporary value
+# Indicates a temporary value
 # Threshold ~4.4 ± 5.0 μV
 # maxISI set at 100 ms 
 # minSpikes, set at 10 spikes
@@ -41,17 +41,9 @@ data = dataset[0]
 # Detect Spikes
 # Detect burst in Spikes
 # Correlation analysis on Bursts throughout channels
-#storage = []
-#for i in range(60) :
-#    storage.append(Spikestamps(googas[i]))
-# temp.number_of_channels
 
 # Note: spike_detection outputs a Spikestamp object, not a neo.Spiketrain or np.array as the documentation states.
 # Note2: Spikestamp.select() needs to be given as an array not as an int. This is because it can select multiple channels.
-
-#    for j in range(i+1, 60) :
-#        for time in storage[i].neo() :
-#           storage[j].binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=False)
 
 # a new matrix is made. it will be kind of like:
 # Channels[1][2]
@@ -68,43 +60,62 @@ data = dataset[0]
 
 spike_detection: Operator = ThresholdCutoff(cutoff=4.0, dead_time=0.002)
 data >> spike_detection
-temp = spike_detection.output
+spikestamps = spike_detection.output
 
 # THIS IS ROUGH OUTLINE FOR HOW C_XY IS CONSTRUCTED
-C_XY = [[] for _ in range(60)] 
-for i in range(58,59):
-    X = temp.select([i])
-    t_start = X.get_first_spikestamp()
-    t_end = X.get_last_spikestamp()
-    temp2 = X.get_view(t_start,t_end)
-    temp3 = temp2.neo()
-    number_of_spikes = len(temp[i])
-    for timestamp in temp3[i] :
+#t_start = spikestamps.get_first_spikestamp()
+#t_end = spikestamps.get_last_spikestamp()
+#for j, timestamp in enumerate(temp3[i]):
+
+def array_to_dict(dict, array, X) :
+    for Y, value in enumerate(array) :
+        dict[(X,Y)] = dict[(X,Y)] + value[:30]
+
+C_XY = {}
+CI_XY = [[0.0 for _ in range(60)] for _ in range(60)]
+for i in range(60):
+    for j in range(60):
+        C_XY[(i,j)] = [0 for _ in range(30)]
+
+
+for i in range(60):
+    X = spikestamps.select([i])
+    X_neo = X.neo()
+    number_of_spikes = len(X_neo[i])
+    for timestamp in X_neo[i]:
         time = timestamp.magnitude.item()
-        temp4 = temp.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True)[0]
-        temp4_normalized = temp4 / number_of_spikes
-        temp4_normalized /= 0.01
-        C_XY[i].append(temp4_normalized)
-# Might need to rotate this array
-print(len(C_XY))
-# THIS IS ROUGH OUTLINE FOR HOW C_X IS CONTRUCTED
-# C_XY is a 2D array
-C_X = []
-for X in C_XY :
-    try :
-        print(len(X[0]))
-        size = len(X) - 1
-        mean = np.sum(X)
-        mean = mean/size
-        C_X.append(mean)
-    except :
-        pass
+        Ys = X.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data
+        Ys_normalized = Ys/(number_of_spikes*0.01)
+        array_to_dict(C_XY, Ys_normalized, i)
+
+C_X = [[] for _ in range(60)]
+for X in range(60) : 
+    C_X[X] = C_XY[(X,0)]  
+    for Y in range(1,60) :
+        C_X[X] += C_XY[(X,Y)]
+    #Add 1/N-1 step
+#Bug here for the X=0 case
 
 # CI
 # We look at the first bin and sum the C_XY value in that first bin through all the channels.
 # Notation is a bit confusing since it implies that we are summing though a range of time.
 
-CXYZERO = np.sum(C_XY[0])
-OTHERSCLAR = np.sum(C_X)
-CI = CXYZERO/OTHERSCLAR
-print(CI)
+
+for X in range(40) :
+    teA = np.sum(C_X[X])
+    for Y in range(40) :
+        te = C_XY[(X,Y)]
+        CI = te[0]/np.sum(teA)
+        CI_XY[X][Y] = CI
+        
+import matplotlib.pyplot as plt
+import numpy as np
+
+CI_XY = np.zeros((40, 40))  # Initialize CI_XY array
+
+for X in range(40):
+    teA = np.sum(C_X[X])
+    for Y in range(40):
+        te = C_XY[(X, Y)]
+        CI = te[0] / np.sum(teA)
+        CI_XY[X][Y] = CI
