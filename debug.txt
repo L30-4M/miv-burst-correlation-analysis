@@ -1,0 +1,16 @@
+import sys
+
+# Assuming your 3D array is named 'my_array'
+output = sys.stdout  # Store the current stdout (console output)
+
+with open('foo.txt', 'w') as file:
+    sys.stdout = file  # Redirect stdout to the file
+    print(C_XY)  # Print the array
+    sys.stdout = output
+
+#---------------------------DEBUG2
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.scatter(*np.array(C_XY).nonzero())
+plt.show()
