@@ -1,0 +1,99 @@
+import numpy as np
+from miv.core.operator import Operator
+from miv.signal.spike import ThresholdCutoff
+from miv.io.openephys import DataManager
+from miv.statistics.burst import burst
+from dataclasses import dataclass
+from miv.core.operator import OperatorMixin
+from miv.statistics.spiketrain_statistics import interspike_intervals
+from miv.core.pipeline import Pipeline
+
+
+@dataclass
+class BurstsFilter(OperatorMixin):
+    tag = "bursts filter"
+    
+    def __post_init__(self):
+        super().__init__()
+
+    def __call__(self, spiketrains):
+        erroneouscopy = spiketrains
+        Chnls = spiketrains.number_of_channels
+        min_isi = 0.1
+        min_len = 10
+        for i in range(Chnls) :
+            spike_interval = interspike_intervals(spiketrains[i])
+            assert spike_interval.all() > 0, "Inter Spike Interval cannot be zero"
+            burst_spike = (spike_interval <= min_isi).astype(np.bool_)
+            delta = np.logical_xor(burst_spike[:-1], burst_spike[1:])
+            interval = np.where(delta)[0]
+            if len(interval) % 2:
+                interval = np.append(interval, len(delta))
+            interval += 1
+            interval = interval.reshape([-1, 2])
+            mask = np.diff(interval) >= min_len
+            interval = interval[mask.ravel(), :]
+            Q = np.array(interval)
+            spike = np.array(spiketrains[i])
+            if np.sum(Q) != 0 :
+                erroneouscopy.data[i] = np.concatenate([spike[start:end+1] for start,end in Q])
+            else :
+                erroneouscopy.data[i] = []
+        return erroneouscopy
+
+
+@dataclass
+class CrossCorrelograms(OperatorMixin):
+    tag = "cross correlograms"
+
+    def __post_init__(self):
+        super().__init__()
+
+    def __call__(self, Xspikestamps, Yspikestamps=None):
+        if Yspikestamps is None: Yspikestamps = Xspikestamps
+        spiketimesMega = Xspikestamps.neo()
+        Xch = Xspikestamps.number_of_channels
+        Ych = Yspikestamps.number_of_channels
+        C_XY = [[[0 for _ in range(30)] for _ in range(Ych)] for _ in range(Xch)]
+        for X in range(Xch) :
+            Ys_binned = np.array([[0 for _ in range(Ych)] for _ in range(30)])
+            spikeQ = 0
+            for time in spiketimesMega[X].magnitude :
+                Ys_binned += Yspikestamps.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data[:30]
+                spikeQ += 1
+            Ys_norm = np.rot90(Ys_binned/(spikeQ * 0.01), -1)
+            Ys_norm[X] = [0 for _ in range(30)]
+            C_XY[X] = Ys_norm
+        return C_XY
+
+
+@dataclass
+class CorrelationIndex(OperatorMixin):
+    tag = "CI matrix"
+
+    def __post_init__(self):
+        super().__init__()
+
+    def __call__(self, C_XY):
+        CHAMOUNT = len(C_XY)
+        CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+        for X in range(CHAMOUNT) :
+            for Y in range(CHAMOUNT) :
+                if(np.sum(C_XY[X][Y]) == 0) : CI = 0
+                else : CI = (C_XY[X][Y][14] + C_XY[X][Y][15]) / np.sum(C_XY[X][Y])
+                CI_XY[X][Y] = CI
+        return CI_XY
+
+data = DataManager("D:\Globus")[0]
+spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
+CI_matrix: Operator = CorrelationIndex()
+CXY_matrix: Operator = CrossCorrelograms()
+burst_filter: Operator = BurstsFilter()
+
+data >> spike_detection >> burst_filter >> CXY_matrix
+spike_detection >> CXY_matrix
+pipeline = Pipeline(CXY_matrix)
+pipeline.run()
+
+tempCXY = CXY_matrix.output
+np.save("precomputedmatricies/foo2", tempCXY)

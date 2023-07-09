@@ -1,2 +1,0 @@
-Software time: 49493@10000000Hz
-Processor: Rhythm FPGA Id: 100 subProcessor: 0 start time: 49408@30000Hz

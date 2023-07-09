@@ -1,0 +1,68 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from miv.core.operator import Operator
+from miv.signal.spike import ThresholdCutoff
+from miv.io.openephys import DataManager
+
+tempC_XY = np.load("precomputedmatricies/foo.npy")
+C_XY = tempC_XY
+CHAMOUNT = 64
+"""
+chnls = [0, 1, 6, 10, 12, 14, 15, 16, 18, 20, 25, 28, 29, 30, 31, 32, 33, 34, 36, 38, 40, 42, 43, 44, 47, 48, 49, 50, 51, 52, 53, 54, 57, 58, 60, 61, 63]
+CHAMOUNT = len(chnls)
+C_XY = [[[0 for _ in range(30)] for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+for i, X in enumerate(chnls) :
+    for j, Y in enumerate(chnls) :
+        C_XY[i][j] = tempC_XY[X][Y]"""
+
+#CI Matrix implementation
+CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+for X in range(CHAMOUNT) :
+    for Y in range(CHAMOUNT) :
+        # Calculate the connectivity index for the given channel pair
+        # C_XY[14] + C_XY[15] shown here is the bucket at Tau = 0, in the paper refered to as C_XY(0)
+        if(np.sum(C_XY[X][Y]) == 0) : CI = 0
+        else : CI = (C_XY[X][Y][14] + C_XY[X][Y][15]) / np.sum(C_XY[X][Y])
+        CI_XY[X][Y] = CI
+
+#CX Matrix implementation
+C_X = np.sum(C_XY, axis=1) / (CHAMOUNT-1)
+
+#Visualizations
+for i, sublist in enumerate(CI_XY):
+    x_values = [i+1] * len(sublist)
+    y_values = sublist
+    plt.scatter(x_values, y_values)
+plt.show()
+
+Histo = np.array(CI_XY).flatten()
+Histo = Histo[Histo != 0]
+plt.hist(Histo, bins=CHAMOUNT, edgecolor='black')
+plt.show()
+
+plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
+plt.colorbar()
+plt.show()
+
+plt.imshow(C_X, cmap='hot', interpolation='nearest')
+plt.colorbar()
+plt.show()
+
+"""
+chnls = [0, 1, 6, 10, 12, 14, 15, 16, 18, 20, 25, 28, 29, 30, 31, 32, 33, 34, 36, 38, 40, 42, 43, 44, 47, 48, 49, 50, 51, 52, 53, 54, 57, 58, 60, 61, 63]
+CHAMOUNT = len(chnls)
+C_XY = [[[0 for _ in range(30)] for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+for i, X in enumerate(chnls) :
+    for j, Y in enumerate(chnls) :
+        C_XY[i][j] = tempC_XY[X][Y]
+"""
+
+"""
+inverse_chnls = [2, 3, 4, 5, 7, 8, 9, 11, 13, 17, 19, 21, 22, 23, 24, 26, 27, 35, 37, 39, 41, 45, 46, 55, 56, 59, 62]
+for X in inverse_chnls :
+    C_XY[X] = [[0 for _ in range(30)] for _ in range(CHAMOUNT)]
+for X in range(CHAMOUNT) :
+    for Y in inverse_chnls :
+        C_XY[X][Y] = [0 for _ in range(30)]  
+"""
