@@ -110,7 +110,7 @@ class CorrelationIndex(OperatorMixin):
         for X in range(CHAMOUNT) :
             for Y in range(CHAMOUNT) :
                 if(np.sum(C_XY[X][Y]) == 0) : CI = 0
-                else : CI = (C_XY[X][Y][14] + C_XY[X][Y][15]) / np.sum(C_XY[X][Y])
+                else : CI = (C_XY[X][Y][15] + C_XY[X][Y][16]) / np.sum(C_XY[X][Y])
                 CI_XY[X][Y] = CI 
         return CI_XY
     
