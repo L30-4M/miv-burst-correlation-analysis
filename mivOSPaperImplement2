@@ -1,14 +1,32 @@
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
+
+import csv
+import functools
+import inspect
+import logging
+import multiprocessing
+import os
+import pathlib
+import datetime
+from dataclasses import dataclass
+
+import matplotlib.pyplot as plt
+import neo
 import numpy as np
-from miv.core.operator import Operator
+import quantities as pq
+from tqdm import tqdm
+
+from miv.core.operator import Operator, DataLoader
 from miv.signal.spike import ThresholdCutoff
 from miv.io.openephys import DataManager
-from miv.statistics.burst import burst
 from dataclasses import dataclass
 from miv.core.operator import OperatorMixin
 from miv.statistics.spiketrain_statistics import interspike_intervals
 from miv.core.pipeline import Pipeline
-
-
+from miv.core.wrapper import wrap_cacher
+#This can be "easily" multiprocessed as there is no dependence on results between channels. We are technically just running the burst function a bunch of times.
+# I actually think most for loops in this whole file of code are areas in which the code can be sharded into many instances.
+dateandtime = datetime.datetime.now().strftime("m%d%H%M")
 @dataclass
 class BurstsFilter(OperatorMixin):
     tag = "bursts filter"
@@ -16,6 +34,7 @@ class BurstsFilter(OperatorMixin):
     def __post_init__(self):
         super().__init__()
 
+    @wrap_cacher(cache_tag="burstfilter")
     def __call__(self, spiketrains):
         erroneouscopy = spiketrains
         Chnls = spiketrains.number_of_channels
@@ -37,20 +56,23 @@ class BurstsFilter(OperatorMixin):
             spike = np.array(spiketrains[i])
             if np.sum(Q) != 0 :
                 erroneouscopy.data[i] = np.concatenate([spike[start:end+1] for start,end in Q])
+                
             else :
                 erroneouscopy.data[i] = []
+        
         return erroneouscopy
 
 
 @dataclass
 class CrossCorrelograms(OperatorMixin):
-    tag = "cross correlograms"
+    tag = "C XY matrix"
 
     def __post_init__(self):
         super().__init__()
 
-    def __call__(self, Xspikestamps, Yspikestamps=None):
-        if Yspikestamps is None: Yspikestamps = Xspikestamps
+    @wrap_cacher(cache_tag="CXYmatrix")
+    def __call__(self, Xspikestamps, Yspikestamps):
+        #if Yspikestamps is None: Yspikestamps = Xspikestamps unsure on if this really works so I will exclude it for now
         spiketimesMega = Xspikestamps.neo()
         Xch = Xspikestamps.number_of_channels
         Ych = Yspikestamps.number_of_channels
@@ -65,11 +87,19 @@ class CrossCorrelograms(OperatorMixin):
             Ys_norm[X] = [0 for _ in range(30)]
             C_XY[X] = Ys_norm
         return C_XY
-
+    
+    def plot_CXY(
+        self,
+        C_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        if save_path is not None:
+            np.save(os.path.join(save_path, "C_XY"), C_XY)
 
 @dataclass
 class CorrelationIndex(OperatorMixin):
-    tag = "CI matrix"
+    tag = "CI XY matrix"
 
     def __post_init__(self):
         super().__init__()
@@ -81,19 +111,48 @@ class CorrelationIndex(OperatorMixin):
             for Y in range(CHAMOUNT) :
                 if(np.sum(C_XY[X][Y]) == 0) : CI = 0
                 else : CI = (C_XY[X][Y][14] + C_XY[X][Y][15]) / np.sum(C_XY[X][Y])
-                CI_XY[X][Y] = CI
+                CI_XY[X][Y] = CI 
         return CI_XY
+    
+    def plot_stuff(
+        self,
+        CI_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        plots = []
+        plt.figure()
+        for i, sublist in enumerate(CI_XY):
+            x_values = [i+1] * len(sublist)
+            y_values = sublist
+            plt.scatter(x_values, y_values)
+        plots.append(plt.gcf())
 
-data = DataManager("D:\Globus")[0]
-spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
-CI_matrix: Operator = CorrelationIndex()
-CXY_matrix: Operator = CrossCorrelograms()
-burst_filter: Operator = BurstsFilter()
+        plt.figure()
+        plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
+        plt.colorbar()
+        plots.append(plt.gcf())
+        if save_path is not None:
+            np.save(os.path.join(save_path, "CI_XY"), CI_XY)
+            for i, plot in enumerate(plots):
+                plot.savefig(os.path.join(save_path, f"graph({i}).png"))
+                plot.clear()
+        if show:
+            plt.show()
 
-data >> spike_detection >> burst_filter >> CXY_matrix
-spike_detection >> CXY_matrix
-pipeline = Pipeline(CXY_matrix)
-pipeline.run()
-
-tempCXY = CXY_matrix.output
-np.save("precomputedmatricies/foo2", tempCXY)
+        
+        
+#Example usage:
+path = "D:/Globus"
+dataset: DataManager = DataManager(data_collection_path=path)
+for i in [0,1,2,3,4,5,6,7,8] :
+    data : DataLoader = dataset[i]
+    spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
+    CXY_matrix: Operator = CrossCorrelograms()
+    CI_XY_matrix: Operator = CorrelationIndex() 
+    
+    data >> spike_detection >> CXY_matrix
+    spike_detection >> CXY_matrix
+    CXY_matrix >> CI_XY_matrix
+    pipeline = Pipeline(CI_XY_matrix) 
+    pipeline.run(working_directory="results/experiment" + str(i+1))
