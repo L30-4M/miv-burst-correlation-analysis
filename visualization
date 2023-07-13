@@ -5,30 +5,83 @@ from miv.core.operator import Operator
 from miv.signal.spike import ThresholdCutoff
 from miv.io.openephys import DataManager
 
-
-
-for i in [1,2,3] :
-    CI_XY = np.load(f"results/experiment{i}/CI_XY_matrix/CI_XY.npy")
-    TC_XY = np.load(f"results/experiment{i}/C_XY_matrix/C_XY.npy")
-    C_XY = []
-    size = len(CI_XY)
-    for j in range(size) :
-        if np.isnan(CI_XY[j]).any() :
-            CI_XY[j] = [0 for _ in range(len(CI_XY[j]))]
-            C_XY.append([[0 for _ in range(30)] for _ in range(len(CI_XY[j]))])
-        else :
-            C_XY.append(TC_XY[j])
-            
-    plt.figure()
-    plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
-    plt.show()
+def CIMatrix(C_XY) :
+    CHAMOUNT = len(C_XY)
+    CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+    for X in range(CHAMOUNT) :
+        for Y in range(CHAMOUNT) :
+            if(np.sum(C_XY[X][Y]) == 0) : CI = 0
+            else : CI = (C_XY[X][Y][15] + C_XY[X][Y][16]) / np.sum(C_XY[X][Y])
+            CI_XY[X][Y] = CI 
+    return CI_XY
+#C_X = np.sum(C_XY, axis=1) / (CHAMOUNT-1)
+#7, 17, 23, 24, 62
+for Experiment in [1, 2, 3, 4, 5, 6, 7, 8, 9] :
+    C_XY = np.load(f"results\experiment{Experiment}\C_XY_matrix\C_XY.npy")
+    CI_XY = CIMatrix(C_XY)
     C_X = np.sum(C_XY, axis=1) / (len(C_XY)-1)
-    #Histo = np.array(CI_XY).flatten()
-    #Histo = Histo[Histo != 0]
-    #plt.hist(Histo, bins=64, edgecolor='black')
-    #plt.show()
-    plt.imshow(C_X, cmap='hot', interpolation='nearest')
-    plt.colorbar()
-    plt.show()
+    for j in range(len(C_XY)) : 
+        if np.isnan(C_X[j]).any() : C_X[j] = np.zeros(30)
+    burst_lens = np.load(fr"results\experiment{Experiment}\bursts_filter\burstlengths.npy", allow_pickle=True)
+    burst_durations = np.load(fr"results\experiment{Experiment}\bursts_filter\burstdurations.npy", allow_pickle=True)
+    #burst_rate = burst_lens/burst_durations
+    
+    
+    for i in range(len(burst_lens)) :
+        plt.scatter(burst_lens[i], burst_durations[i])
+    
+    #plt.savefig(f"MivOSImages\experiment{Experiment}\BurstStuff")
+plt.show()    
 
 
+"""
+plt.imshow(C_X, cmap='hot', interpolation='nearest')
+plt.colorbar()
+plt.savefig(f"MivOSImages\experiment{Experiment}\C_XMeanHeatMap")
+plt.close()
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+n_channels, n_indices = C_X.shape
+time_range = np.arange(-145, 150, 10)
+channel_indices, time_indices = np.meshgrid(time_range, np.arange(n_channels))
+ax.plot_surface(time_indices, channel_indices, C_X, rcount = 400, ccount = 100, cmap='viridis')
+ax.set_xlabel('Channel')
+ax.set_ylabel('Time (ms)')
+ax.set_zlabel('Spikes/s')
+plt.savefig(f"MivOSImages\experiment{Experiment}\C_XMean")
+plt.close()
+
+plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
+plt.colorbar()
+plt.savefig(f"MivOSImages\experiment{Experiment}\CIHeatmap")
+plt.close()
+
+for i, sublist in enumerate(CI_XY):
+    x_values = []
+    y_values = []
+    for val in sublist:
+        if val != 0:
+            x_values.append(i+1)
+            y_values.append(val)
+    plt.scatter(x_values, y_values)
+plt.savefig(f"MivOSImages\experiment{Experiment}\CIScatter")
+plt.close()
+
+Histo = np.array(CI_XY).flatten()
+Histo = Histo[Histo != 0]
+plt.hist(Histo, bins=500, edgecolor='black')
+plt.savefig(f"MivOSImages\experiment{Experiment}\CIHisto")
+plt.close()
+
+burst_durations = np.load(fr"results\experiment{Experiment}\bursts_filter\burstdurations.npy", allow_pickle=True)
+for sublist in burst_durations :
+    burstN = np.arange(len(sublist))
+    plt.scatter(burstN, sublist)
+plt.yscale('log')  # Set the y-axis scale to logarithmic
+plt.xlabel('Burst number')
+plt.ylabel('Burst duration')
+plt.grid(True)
+plt.savefig(f"MivOSImages\experiment{Experiment}\BurstStuff")
+plt.show()
+"""

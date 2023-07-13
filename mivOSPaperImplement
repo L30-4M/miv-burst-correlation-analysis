@@ -10,11 +10,13 @@ import pathlib
 import datetime
 from dataclasses import dataclass
 
+
 import matplotlib.pyplot as plt
 import neo
 import numpy as np
 import quantities as pq
 from tqdm import tqdm
+from typing import Optional
 
 from miv.core.operator import Operator, DataLoader
 from miv.signal.spike import ThresholdCutoff
@@ -24,18 +26,25 @@ from miv.core.operator import OperatorMixin
 from miv.statistics.spiketrain_statistics import interspike_intervals
 from miv.core.pipeline import Pipeline
 from miv.core.wrapper import wrap_cacher
+from miv.visualization.event import plot_spiketrain_raster
 #This can be "easily" multiprocessed as there is no dependence on results between channels. We are technically just running the burst function a bunch of times.
 # I actually think most for loops in this whole file of code are areas in which the code can be sharded into many instances.
+# Need to add aditional check for burst rate to be inbetween 3 and 25 spikes/s
 dateandtime = datetime.datetime.now().strftime("m%d%H%M")
 @dataclass
 class BurstsFilter(OperatorMixin):
     tag = "bursts filter"
-    
+    burst_lens = []
+    burst_durations = []
+
     def __post_init__(self):
         super().__init__()
+        self.burst_lens = []
+        self.burst_durations = []
 
     @wrap_cacher(cache_tag="burstfilter")
     def __call__(self, spiketrains):
+        # Code taken from burst function
         erroneouscopy = spiketrains
         Chnls = spiketrains.number_of_channels
         min_isi = 0.1
@@ -56,12 +65,44 @@ class BurstsFilter(OperatorMixin):
             spike = np.array(spiketrains[i])
             if np.sum(Q) != 0 :
                 erroneouscopy.data[i] = np.concatenate([spike[start:end+1] for start,end in Q])
-                
+                start_time = spike[Q[:, 0]]
+                end_time = spike[Q[:, 1]]
+                self.burst_lens.append(Q[:, 1] - Q[:, 0] + 1)
+                self.burst_durations.append(end_time - start_time)
             else :
                 erroneouscopy.data[i] = []
         
         return erroneouscopy
+    
+    def plot_spiketrain(
+        self,
+        spikestamps,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+        """
+        Plot spike train in raster
+        """
+        t0 = spikestamps.get_first_spikestamp()
+        tf = spikestamps.get_last_spikestamp()
 
+        t0 = spikestamps.get_first_spikestamp()
+        tf = spikestamps.get_last_spikestamp()
+
+        # Create a single plot with adjusted x-axis limits
+        fig, ax = plot_spiketrain_raster(spikestamps, t0, tf)
+        if save_path is not None:
+            np.save(os.path.join(save_path, "burstlengths"), np.asanyarray(self.burst_lens))
+            np.save(os.path.join(save_path, "burstdurations"), np.asanyarray(self.burst_durations))
+            #self.burst_lens = []
+            #self.burst_durations = []
+            plt.savefig(os.path.join(save_path, f"burst_raster.png"))
+
+        if show:
+            plt.show()
+            plt.close("all")
+
+        return ax
 
 @dataclass
 class CrossCorrelograms(OperatorMixin):
@@ -96,6 +137,7 @@ class CrossCorrelograms(OperatorMixin):
     ) :
         if save_path is not None:
             np.save(os.path.join(save_path, "C_XY"), C_XY)
+        
 
 @dataclass
 class CorrelationIndex(OperatorMixin):
@@ -150,9 +192,8 @@ for i in [0,1,2,3,4,5,6,7,8] :
     spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
     CXY_matrix: Operator = CrossCorrelograms()
     CI_XY_matrix: Operator = CorrelationIndex() 
+    burst_filter: Operator = BurstsFilter()
     
-    data >> spike_detection >> CXY_matrix
-    spike_detection >> CXY_matrix
-    CXY_matrix >> CI_XY_matrix
-    pipeline = Pipeline(CI_XY_matrix) 
+    data >> spike_detection >> burst_filter
+    pipeline = Pipeline(burst_filter) 
     pipeline.run(working_directory="results/experiment" + str(i+1))
