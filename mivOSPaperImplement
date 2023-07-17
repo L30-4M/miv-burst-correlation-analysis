@@ -1,50 +1,46 @@
+import os
+import neo
+import pathlib
+import numpy as np
+import matplotlib.pyplot as plt
+
+from dataclasses import dataclass
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
 
-import csv
-import functools
-import inspect
-import logging
-import multiprocessing
-import os
-import pathlib
-import datetime
-from dataclasses import dataclass
 
 
-import matplotlib.pyplot as plt
-import neo
-import numpy as np
-import quantities as pq
-from tqdm import tqdm
-from typing import Optional
-
-from miv.core.operator import Operator, DataLoader
-from miv.signal.spike import ThresholdCutoff
-from miv.io.openephys import DataManager
-from dataclasses import dataclass
-from miv.core.operator import OperatorMixin
-from miv.statistics.spiketrain_statistics import interspike_intervals
 from miv.core.pipeline import Pipeline
 from miv.core.wrapper import wrap_cacher
+from miv.io.openephys import DataManager
+from miv.signal.spike import ThresholdCutoff
+from miv.core.operator import Operator, DataLoader, OperatorMixin
+from miv.statistics.spiketrain_statistics import interspike_intervals
 from miv.visualization.event import plot_spiketrain_raster
 #This can be "easily" multiprocessed as there is no dependence on results between channels. We are technically just running the burst function a bunch of times.
 # I actually think most for loops in this whole file of code are areas in which the code can be sharded into many instances.
 # Need to add aditional check for burst rate to be inbetween 3 and 25 spikes/s
-dateandtime = datetime.datetime.now().strftime("m%d%H%M")
+
+# TODO: Minor refactoring so code can work with arbitrary bins etc.
+# TODO: Rename all functions and file names to be more clear. Much here is temporary.
+# TODO: Implement visualizations from pages 44, 47
 @dataclass
 class BurstsFilter(OperatorMixin):
     tag = "bursts filter"
+    # Temporary
     burst_lens = []
     burst_durations = []
 
     def __post_init__(self):
         super().__init__()
+        # Temporary
         self.burst_lens = []
         self.burst_durations = []
 
     @wrap_cacher(cache_tag="burstfilter")
     def __call__(self, spiketrains):
         # Code taken from burst function
+        # I should probably include comments that where in the burst function.
+        # If they are not here then refer to burst function
         erroneouscopy = spiketrains
         Chnls = spiketrains.number_of_channels
         min_isi = 0.1
@@ -74,28 +70,17 @@ class BurstsFilter(OperatorMixin):
         
         return erroneouscopy
     
-    def plot_spiketrain(
+    def plot_bursttrain(
         self,
         spikestamps,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ) -> plt.Axes:
-        """
-        Plot spike train in raster
-        """
         t0 = spikestamps.get_first_spikestamp()
         tf = spikestamps.get_last_spikestamp()
-
-        t0 = spikestamps.get_first_spikestamp()
-        tf = spikestamps.get_last_spikestamp()
-
-        # Create a single plot with adjusted x-axis limits
         fig, ax = plot_spiketrain_raster(spikestamps, t0, tf)
+
         if save_path is not None:
-            np.save(os.path.join(save_path, "burstlengths"), np.asanyarray(self.burst_lens))
-            np.save(os.path.join(save_path, "burstdurations"), np.asanyarray(self.burst_durations))
-            #self.burst_lens = []
-            #self.burst_durations = []
             plt.savefig(os.path.join(save_path, f"burst_raster.png"))
 
         if show:
@@ -103,6 +88,29 @@ class BurstsFilter(OperatorMixin):
             plt.close("all")
 
         return ax
+    
+    # Visualization (probably?) based on what is shown on page 45
+    def plot_burststatistics(
+        self,
+        spikestamps,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+        
+        fig, ax = plt.subplots()
+        for i in range(len(self.burst_lens)):
+            ax.scatter(self.burst_lens[i], self.burst_durations[i])
+        ax.set_xlabel('Burst length')
+        ax.set_ylabel('Burst duration')
+        
+        if save_path is not None:
+            np.save(os.path.join(save_path, "burstlengths"), np.asarray(self.burst_lens))
+            np.save(os.path.join(save_path, "burstdurations"), np.asarray(self.burst_durations))
+            plt.savefig(os.path.join(save_path, "burststats"))
+        
+        if show:
+            plt.show()
+            plt.close("all")
 
 @dataclass
 class CrossCorrelograms(OperatorMixin):
@@ -113,22 +121,27 @@ class CrossCorrelograms(OperatorMixin):
 
     @wrap_cacher(cache_tag="CXYmatrix")
     def __call__(self, Xspikestamps, Yspikestamps):
-        #if Yspikestamps is None: Yspikestamps = Xspikestamps unsure on if this really works so I will exclude it for now
-        spiketimesMega = Xspikestamps.neo()
-        Xch = Xspikestamps.number_of_channels
+        spiketimesMega = Xspikestamps.neo() # Extracts the spike times from Xspikestamps
+        Xch = Xspikestamps.number_of_channels  # Number of channels in Xspikestamps
         Ych = Yspikestamps.number_of_channels
         C_XY = [[[0 for _ in range(30)] for _ in range(Ych)] for _ in range(Xch)]
         for X in range(Xch) :
             Ys_binned = np.array([[0 for _ in range(Ych)] for _ in range(30)])
-            spikeQ = 0
+            spikeQ = 0 # Counter for spikes
             for time in spiketimesMega[X].magnitude :
+                # Binning the spike times in Yspikestamps within a time window and counting the number of spikes
                 Ys_binned += Yspikestamps.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data[:30]
                 spikeQ += 1
-            Ys_norm = np.rot90(Ys_binned/(spikeQ * 0.01), -1)
-            Ys_norm[X] = [0 for _ in range(30)]
-            C_XY[X] = Ys_norm
+            Ys_norm = np.rot90(Ys_binned/(spikeQ * 0.01), -1) # Normalizing the binned data
+            Ys_norm[X] = [0 for _ in range(30)] # Throwing out autocorrelation
+            C_XY[X] = Ys_norm # Updating the C_XY matrix with the normalized data
+
         return C_XY
     
+    # TODO: Implement visualization à la page 47.
+    # Naive approach is display all sublots. Too many!
+    # Probably best approach is to let user select which subplots to display. 
+    # Alternatively only plot most "interesting" (?) channels. How to quantify?
     def plot_CXY(
         self,
         C_XY,
@@ -138,6 +151,61 @@ class CrossCorrelograms(OperatorMixin):
         if save_path is not None:
             np.save(os.path.join(save_path, "C_XY"), C_XY)
         
+@dataclass
+class MeanCrossCorrelogram(OperatorMixin):
+    tag = "C X matrix"
+
+    def __post_init__(self):
+        super().__init__()
+
+    def __call__(self, C_XY):
+        return np.sum(C_XY, axis=1) / (len(C_XY)-1)
+    
+    # Visualization (probably?) based on what is shown on page 46
+    def plot_CX3D(self,
+        C_X,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        n_channels, n_indices = C_X.shape
+        # Make logic based on dimensions of array/bins sizes.
+        time_range = np.arange(-145, 150, 10)
+
+        channel_indices, time_indices = np.meshgrid(time_range, np.arange(n_channels))
+        ax.plot_surface(time_indices, channel_indices, C_X, rcount = 400, ccount = 100, cmap='viridis')
+        ax.set_xlabel('Channel')
+        ax.set_ylabel('Time (ms)')
+        ax.set_zlabel('Spikes/s')
+
+
+        if save_path is not None:
+            plt.savefig(os.path.join(save_path, "C_XMean"))
+        
+        if show:
+            plt.show()
+            plt.close("all")
+    
+        return ax
+    
+    # Personal visualization metric
+    def plot_CXHeatmap(self,
+        C_X,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        fig, ax = plt.subplots()
+        plt.imshow(C_X, cmap='hot', interpolation='nearest')
+        plt.colorbar()
+        if save_path is not None:
+            plt.savefig(os.path.join(save_path, "C_XMeanHeatMap"))
+        
+        if show:
+            plt.show()
+            plt.close("all")
+    
+        return ax
 
 @dataclass
 class CorrelationIndex(OperatorMixin):
@@ -148,41 +216,77 @@ class CorrelationIndex(OperatorMixin):
 
     def __call__(self, C_XY):
         CHAMOUNT = len(C_XY)
-        CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)]
+        CI_XY = [[0 for _ in range(CHAMOUNT)] for _ in range(CHAMOUNT)] # Initializing a 2D matrix with zeros
         for X in range(CHAMOUNT) :
             for Y in range(CHAMOUNT) :
                 if(np.sum(C_XY[X][Y]) == 0) : CI = 0
-                else : CI = (C_XY[X][Y][15] + C_XY[X][Y][16]) / np.sum(C_XY[X][Y])
+                else : CI = (C_XY[X][Y][14] + C_XY[X][Y][15]) / np.sum(C_XY[X][Y]) # Grabbing the two bins left and right of zero and dividing it by the number of spikes
+                #                                                                    For more information see equation 2 on page 52 of [paper link]
                 CI_XY[X][Y] = CI 
         return CI_XY
     
-    def plot_stuff(
+    # Visualization (probably?) based on what is shown on page 48
+    def plot_CIscatter(
         self,
         CI_XY,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ) :
-        plots = []
-        plt.figure()
+        fig, ax = plt.subplots()
         for i, sublist in enumerate(CI_XY):
             x_values = [i+1] * len(sublist)
             y_values = sublist
             plt.scatter(x_values, y_values)
-        plots.append(plt.gcf())
-
-        plt.figure()
-        plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
-        plt.colorbar()
-        plots.append(plt.gcf())
+    
         if save_path is not None:
-            np.save(os.path.join(save_path, "CI_XY"), CI_XY)
-            for i, plot in enumerate(plots):
-                plot.savefig(os.path.join(save_path, f"graph({i}).png"))
-                plot.clear()
+           plt.savefig(os.path.join(save_path, f"CIScatter"))
+        
         if show:
             plt.show()
-
+            plt.close("all")
+    
+        return ax
+    
+    # Personal visualization metric
+    def plot_CIheatmap(
+        self,
+        CI_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        fig, ax = plt.subplots()
+        plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
+        plt.colorbar()
+        if save_path is not None:
+           plt.savefig(os.path.join(save_path, f"CIScatter"))
         
+        if show:
+            plt.show()
+            plt.close("all")
+    
+        return ax
+    
+    # Visualization (probably?) based on what is shown on page 48
+    def plot_CIhistogram(
+        self,
+        CI_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        fig, ax = plt.subplots()
+        Histo = np.array(CI_XY).flatten()
+        Histo = Histo[Histo != 0]
+        plt.hist(Histo, bins=500, edgecolor='black')
+        #500 is just random magic number. TODO: add some sort of logic to selecting number.
+
+        if save_path is not None:
+           plt.savefig(os.path.join(save_path, f"CIHisto"))
+        
+        if show:
+            plt.show()
+            plt.close("all")
+    
+        return ax
         
 #Example usage:
 path = "D:/Globus"
