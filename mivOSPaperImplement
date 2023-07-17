@@ -23,6 +23,7 @@ from miv.visualization.event import plot_spiketrain_raster
 # TODO: Minor refactoring so code can work with arbitrary bins etc.
 # TODO: Rename all functions and file names to be more clear. Much here is temporary.
 # TODO: Implement visualizations from pages 44, 47
+# TODO: Should add histogram visualization of burst lens and durations.
 @dataclass
 class BurstsFilter(OperatorMixin):
     tag = "bursts filter"
@@ -90,7 +91,7 @@ class BurstsFilter(OperatorMixin):
         return ax
     
     # Visualization (probably?) based on what is shown on page 45
-    def plot_burststatistics(
+    def plot_lenvsduration(
         self,
         spikestamps,
         show: bool = False,
@@ -174,6 +175,9 @@ class MeanCrossCorrelogram(OperatorMixin):
         time_range = np.arange(-145, 150, 10)
 
         channel_indices, time_indices = np.meshgrid(time_range, np.arange(n_channels))
+        # More magic numbers that should be given logic.
+        # Needed to be done so that interpolation was heavily prefered along one axis. 
+        # Unsure how or why they work atm. When I get around to fixing I will figure out.
         ax.plot_surface(time_indices, channel_indices, C_X, rcount = 400, ccount = 100, cmap='viridis')
         ax.set_xlabel('Channel')
         ax.set_ylabel('Time (ms)')
