@@ -1,32 +1,30 @@
 import os
 import neo
+import csv
 import pathlib
 import numpy as np
 import matplotlib.pyplot as plt
 
 from dataclasses import dataclass
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
-
-
-
-from miv.core.pipeline import Pipeline
 from miv.core.wrapper import wrap_cacher
-from miv.io.openephys import DataManager
-from miv.signal.spike import ThresholdCutoff
-from miv.core.operator import Operator, DataLoader, OperatorMixin
+from miv.core.operator import OperatorMixin
 from miv.statistics.spiketrain_statistics import interspike_intervals
 from miv.visualization.event import plot_spiketrain_raster
-#This can be "easily" multiprocessed as there is no dependence on results between channels. We are technically just running the burst function a bunch of times.
+from miv.statistics.spiketrain_statistics import firing_rates
+# This can be "easily" multiprocessed as there is no dependence on results between channels. We are technically just running the burst function a bunch of times.
 # I actually think most for loops in this whole file of code are areas in which the code can be sharded into many instances.
-# Need to add aditional check for burst rate to be inbetween 3 and 25 spikes/s
 
+# TODO: add aditional check for burst rate to be inbetween 3 and 25 spikes/s (possibly?)
 # TODO: Minor refactoring so code can work with arbitrary bins etc.
 # TODO: Rename all functions and file names to be more clear. Much here is temporary.
 # TODO: Implement visualizations from pages 44, 47
 # TODO: Should add histogram visualization of burst lens and durations.
 @dataclass
 class BurstsFilter(OperatorMixin):
-    tag = "bursts filter"
+    tag: str = "bursts filter"
+    min_isi: float = 0.1
+    min_len: int = 10
     # Temporary
     burst_lens = []
     burst_durations = []
@@ -42,10 +40,11 @@ class BurstsFilter(OperatorMixin):
         # Code taken from burst function
         # I should probably include comments that where in the burst function.
         # If they are not here then refer to burst function
+        min_isi = self.min_isi
+        min_len = self.min_len
         erroneouscopy = spiketrains
         Chnls = spiketrains.number_of_channels
-        min_isi = 0.1
-        min_len = 10
+        
         for i in range(Chnls) :
             spike_interval = interspike_intervals(spiketrains[i])
             assert spike_interval.all() > 0, "Inter Spike Interval cannot be zero"
@@ -79,19 +78,76 @@ class BurstsFilter(OperatorMixin):
     ) -> plt.Axes:
         t0 = spikestamps.get_first_spikestamp()
         tf = spikestamps.get_last_spikestamp()
-        fig, ax = plot_spiketrain_raster(spikestamps, t0, tf)
 
-        if save_path is not None:
-            plt.savefig(os.path.join(save_path, f"burst_raster.png"))
-
+        # TODO: REFACTOR. Make single plot, and change xlim
+        term = 60
+        n_terms = int(np.ceil((tf - t0) / term))
+        if n_terms == 0:
+            # TODO: Warning message
+            return None
+        for idx in range(n_terms):
+            fig, ax = plot_spiketrain_raster(
+                spikestamps, idx * term + t0, min((idx + 1) * term + t0, tf)
+            )
+            if save_path is not None:
+                plt.savefig(os.path.join(save_path, f"burst_raster_{idx:03d}.png"))
+            if not show:
+                plt.close("all")
         if show:
             plt.show()
             plt.close("all")
+        return ax
+    
+    def plot_firing_rate_histogram(self, spikestamps, show=False, save_path=None):
+        """Plot firing rate histogram"""
+        threshold = 3
+
+        rates = firing_rates(spikestamps)["rates"]
+        hist, bins = np.histogram(rates, bins=20)
+        logbins = np.logspace(
+            np.log10(max(bins[0], 1e-3)), np.log10(bins[-1]), len(bins)
+        )
+        fig = plt.figure()
+        ax = plt.gca()
+        ax.hist(rates, bins=logbins)
+        ax.axvline(
+            np.mean(rates),
+            color="r",
+            linestyle="dashed",
+            linewidth=1,
+            label=f"Mean {np.mean(rates):.2f} Hz",
+        )
+        ax.axvline(
+            threshold,
+            color="g",
+            linestyle="dashed",
+            linewidth=1,
+            label="Quality Threshold",
+        )
+        ax.set_xscale("log")
+        xlim = ax.get_xlim()
+        ax.set_xlabel("Firing rate (Hz) (log-scale)")
+        ax.set_ylabel("Count")
+        ax.set_xlim([min(xlim[0], 1e-1), max(1e2, xlim[1])])
+        ax.legend()
+        if save_path is not None:
+            fig.savefig(os.path.join(f"{save_path}", "firing_rate_histogram.png"))
+            with open(
+                os.path.join(f"{save_path}", "firing_rate_histogram.csv"), "w"
+            ) as f:
+                writer = csv.writer(f)
+                writer.writerow(["channel", "firing_rate_hz"])
+                data = list(enumerate(rates))
+                data.sort(reverse=True, key=lambda x: x[1])
+                for ch, rate in data:
+                    writer.writerow([ch, rate])
+        if show:
+            plt.show()
 
         return ax
     
     # Visualization (probably?) based on what is shown on page 45
-    def plot_lenvsduration(
+    def plot_lengthVduration(
         self,
         spikestamps,
         show: bool = False,
@@ -113,28 +169,48 @@ class BurstsFilter(OperatorMixin):
             plt.show()
             plt.close("all")
 
+
 @dataclass
 class CrossCorrelograms(OperatorMixin):
-    tag = "C XY matrix"
+    tag: str = "C XY matrix"
+
+    keep_autocorr: bool = False
+    deltaT: float = 0.15
+    binsize: float = 0.01
 
     def __post_init__(self):
         super().__init__()
 
+    # TODO: If inputs are different than it should not use the same cache.
     @wrap_cacher(cache_tag="CXYmatrix")
     def __call__(self, Xspikestamps, Yspikestamps):
         spiketimesMega = Xspikestamps.neo() # Extracts the spike times from Xspikestamps
-        Xch = Xspikestamps.number_of_channels  # Number of channels in Xspikestamps
+
+        # Initializing constants
+        binN = round(2*(self.deltaT/self.binsize))
+        Xch = Xspikestamps.number_of_channels
         Ych = Yspikestamps.number_of_channels
-        C_XY = [[[0 for _ in range(30)] for _ in range(Ych)] for _ in range(Xch)]
+        binsize = self.binsize
+        deltaT = self.deltaT
+
+        # Initializing empty return array
+        C_XY = [[[0 for _ in range(binN)] for _ in range(Ych)] for _ in range(Xch)]
+
+        # Main logic behind calculating cross correlogram
         for X in range(Xch) :
-            Ys_binned = np.array([[0 for _ in range(Ych)] for _ in range(30)])
+
+            Ys_binned = np.array([[0 for _ in range(Ych)] for _ in range(binN)])
             spikeQ = 0 # Counter for spikes
+
             for time in spiketimesMega[X].magnitude :
                 # Binning the spike times in Yspikestamps within a time window and counting the number of spikes
-                Ys_binned += Yspikestamps.binning(bin_size=0.01, t_start=time-0.15, t_end=time+0.15, return_count=True).data[:30]
+                Ys_binned += Yspikestamps.binning(bin_size=binsize, t_start=time-deltaT, t_end=time+deltaT, return_count=True).data[:binN]
                 spikeQ += 1
-            Ys_norm = np.rot90(Ys_binned/(spikeQ * 0.01), -1) # Normalizing the binned data
-            Ys_norm[X] = [0 for _ in range(30)] # Throwing out autocorrelation
+            
+            
+            if(spikeQ == 0) : spikeQ = 1 # Avoiding divide by zero error.
+            Ys_norm = np.rot90(Ys_binned/(spikeQ * binsize), -1) # Normalizing the binned data
+            if(self.keep_autocorr) : Ys_norm[X] = [0 for _ in range(binN)] # Throwing out autocorrelation
             C_XY[X] = Ys_norm # Updating the C_XY matrix with the normalized data
 
         return C_XY
@@ -148,13 +224,11 @@ class CrossCorrelograms(OperatorMixin):
         C_XY,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
-    ) :
-        if save_path is not None:
-            np.save(os.path.join(save_path, "C_XY"), C_XY)
+    ) : return None
         
 @dataclass
 class MeanCrossCorrelogram(OperatorMixin):
-    tag = "C X matrix"
+    tag: str = "C X matrix"
 
     def __post_init__(self):
         super().__init__()
@@ -175,7 +249,7 @@ class MeanCrossCorrelogram(OperatorMixin):
         time_range = np.arange(-145, 150, 10)
 
         channel_indices, time_indices = np.meshgrid(time_range, np.arange(n_channels))
-        # More magic numbers that should be given logic.
+        # Magic numbers that should TODO: be given logic
         # Needed to be done so that interpolation was heavily prefered along one axis. 
         # Unsure how or why they work atm. When I get around to fixing I will figure out.
         ax.plot_surface(time_indices, channel_indices, C_X, rcount = 400, ccount = 100, cmap='viridis')
@@ -213,7 +287,7 @@ class MeanCrossCorrelogram(OperatorMixin):
 
 @dataclass
 class CorrelationIndex(OperatorMixin):
-    tag = "CI XY matrix"
+    tag: str = "CI XY matrix"
 
     def __post_init__(self):
         super().__init__()
@@ -262,7 +336,7 @@ class CorrelationIndex(OperatorMixin):
         plt.imshow(CI_XY, cmap='hot', interpolation='nearest')
         plt.colorbar()
         if save_path is not None:
-           plt.savefig(os.path.join(save_path, f"CIScatter"))
+           plt.savefig(os.path.join(save_path, f"CIHeatmap"))
         
         if show:
             plt.show()
@@ -281,8 +355,7 @@ class CorrelationIndex(OperatorMixin):
         Histo = np.array(CI_XY).flatten()
         Histo = Histo[Histo != 0]
         plt.hist(Histo, bins=500, edgecolor='black')
-        #500 is just random magic number. TODO: add some sort of logic to selecting number.
-
+        # Another magic number that should TODO: be given logic
         if save_path is not None:
            plt.savefig(os.path.join(save_path, f"CIHisto"))
         
@@ -291,17 +364,25 @@ class CorrelationIndex(OperatorMixin):
             plt.close("all")
     
         return ax
-        
-#Example usage:
-path = "D:/Globus"
-dataset: DataManager = DataManager(data_collection_path=path)
-for i in [0,1,2,3,4,5,6,7,8] :
-    data : DataLoader = dataset[i]
-    spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
-    CXY_matrix: Operator = CrossCorrelograms()
-    CI_XY_matrix: Operator = CorrelationIndex() 
-    burst_filter: Operator = BurstsFilter()
     
-    data >> spike_detection >> burst_filter
-    pipeline = Pipeline(burst_filter) 
-    pipeline.run(working_directory="results/experiment" + str(i+1))
+    def plot_CIseperatedhistograms(
+        self,
+        CI_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) :
+        
+        for i, sublist in enumerate(CI_XY):
+            if(np.sum(sublist) == 0): continue
+            fig, ax = plt.subplots()
+            plt.hist(sublist, bins=40, edgecolor='black')
+            if save_path is not None:
+                plt.savefig(os.path.join(save_path, f"Channel{i+1}Histogram"))
+            if not show:
+                plt.close("all")
+        if show:
+            plt.show()
+            plt.close("all")
+
+        return ax
+        
