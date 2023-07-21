@@ -10,7 +10,7 @@ from miv.core.datatype import Spikestamps
 from miv.io.openephys import DataManager
 from miv.signal.spike import ThresholdCutoff
 from miv.core.operator import Operator, DataLoader
-from mivOSPaperImplement import CrossCorrelograms, CorrelationIndex, MeanCrossCorrelogram, BurstsFilter
+from miv_burst_correlation import CrossCorrelograms, CoincidenceMatrix, MeanCrossCorrelogram, BurstsFilter
 
 spiketrains = Spikestamps()
 spiketrains.append(neo.SpikeTrain(
@@ -26,18 +26,15 @@ spiketrains.append(neo.SpikeTrain(
 
 # Test set for BurstsFilter class
 def test_bursts_filter_call():
-    # Initialize the spiketrain as below
 
     bursts_filter = BurstsFilter(min_isi=0.1, min_len=3)
     result = bursts_filter(spiketrains)
 
-    # Check that the result is a neo.SpikeTrain object
+    # Check that the result is a Spikestamps object
     assert isinstance(result, Spikestamps)
 
     # Check that the number of channels in the result matches the input
     assert result.number_of_channels == 2
-
-    # Additional checks if required
 
 
 # Test set for CrossCorrelograms class
@@ -53,8 +50,6 @@ def test_cross_correlograms_call():
     assert len(result[0]) == len(Yspikestamps)
     assert len(result[0][0]) == len(result[0][1])  # Assuming it's a square matrix
 
-    # Additional checks if required
-
 
 # Test set for MeanCrossCorrelogram class
 def test_mean_cross_correlogram_call():
@@ -62,15 +57,13 @@ def test_mean_cross_correlogram_call():
     Xspikestamps = spiketrains
     Yspikestamps = spiketrains
     cross_corr = CrossCorrelograms()
-    C_XY = cross_corr(Xspikestamps, Yspikestamps)  # Replace with your cross-correlogram data
+    C_XY = cross_corr(Xspikestamps, Yspikestamps)
 
     mean_corr = MeanCrossCorrelogram()
     result = mean_corr(C_XY)
 
     # Check the dimensions of the result
     assert len(result) == len(C_XY)
-
-    # Additional checks if required
 
 
 # Test set for CorrelationIndex class
@@ -82,42 +75,34 @@ def test_correlation_index_call():
     cross_corr = CrossCorrelograms()
     C_XY = cross_corr(Xspikestamps, Yspikestamps) 
 
-    correlation_index = CorrelationIndex()
+    correlation_index = CoincidenceMatrix()
     result = correlation_index(C_XY)
 
     # Check the dimensions of the result
     assert len(result) == len(C_XY)
     assert len(result[0]) == len(C_XY)
 
-    # Additional checks if required
 
 
 # Test case 2: Empty inputs
 def test_empty_inputs():
-    # Create empty Neo SpikeTrain objects
     Xspikestamps = Spikestamps()
     Yspikestamps = Spikestamps()
-    
-    # Call the function and get the result
+
     test = CrossCorrelograms()
     result = test(Xspikestamps, Yspikestamps)
     #assert len(result) == 0
-    # Perform your assertion on the result
 
 # Test case 3: One spike in each channel
 def test_one_spike_per_channel():
-    # Create Neo SpikeTrain objects with one spike in each channel
-    Xspikestamps = Spikestamps([[0], [1], [2]])  # First Spikestamps object with one spike in each channel and 3 channels
-    Yspikestamps = Spikestamps([[0], [1], [2]])  # Second Spikestamps object with one spike in each channel and 3 channels
+    Xspikestamps = Spikestamps([[0], [1], [2]])  
+    Yspikestamps = Spikestamps([[0], [1], [2]])  
     
     
     # Call the function and get the result
     test = CrossCorrelograms()
     result = test(Xspikestamps, Yspikestamps)
-    
-    # Perform your assertion on the result
     #assert len(result) == 0
-    # Perform additional assertions based on the expected output
 
 def test_example_usage1():
     #Example usage:
@@ -143,14 +128,14 @@ def test_example_usage2():
         data : DataLoader = dataset[i]
         spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
         cross_correlogram: Operator = CrossCorrelograms()
-        correlation_matrix: Operator = CorrelationIndex() 
-        test_mean_cross_correlogram: Operator = MeanCrossCorrelogram()
+        correlation_matrix: Operator = CoincidenceMatrix() 
+        mean_cross_correlogram: Operator = MeanCrossCorrelogram()
         burst_filter: Operator = BurstsFilter()
         
         data >> spike_detection >> burst_filter >> cross_correlogram
         spike_detection >> cross_correlogram
-        cross_correlogram >> CI_XY_matrix
-        pipeline = Pipeline(CI_XY_matrix) 
-        pipeline.run(working_directory="results/experiment" + str(i+1))
+        cross_correlogram >> correlation_matrix
+        pipeline = Pipeline(correlation_matrix) 
+        pipeline.run(working_directory=f"results/experiment{i+1}")
 
         
