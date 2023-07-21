@@ -8,7 +8,7 @@ In this repository, we aim to implement the correlation index matrix algorithm p
 
 data >> spike detection >> Burst Filter >> Cross Correlogram
 
-spike detection >> Cross Correlogram >> Coincidence Index
+        spike detection >> Cross Correlogram >> Coincidence Index
 
 ## Installation
 
@@ -27,14 +27,17 @@ pip install .
 
 ## Implemented Modules
 
-Currently three Operators are added:
+Currently four Operators are added:
 - BurstFilter
 - CrossCorrelograms
+- MeanCrossCorrelograms
 - CorrelationIndex
 
-These three Operators do as followed:
+
+These four Operators do as followed:
 - Takes a signal of Spikestamps and throws out any Spikes that are not part of a burst.
 - Takes two signals consisting of Spikestamps (Xtrain and Ytrain respectively) and creates a cross correlogram matrix.
+- Takes a cross correlogram matrix and creates a mean correlogram
 - Takes a cross correlogram matrix and creates a Correlation index matrix
 
 > The analysis pipeline is developed as a plugin for the [MiV-OS](https://github.com/GazzolaLab/MiV-OS).
