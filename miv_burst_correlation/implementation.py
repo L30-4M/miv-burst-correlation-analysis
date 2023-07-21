@@ -1,4 +1,4 @@
-__all__ = ["BurstsFilter", "CrossCorrelograms", "CorrelationMatrix", "MeanCrossCorrelogram"]
+__all__ = ["BurstsFilter", "CrossCorrelograms", "CoincidenceMatrix", "MeanCrossCorrelogram"]
 
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
 
@@ -343,9 +343,9 @@ class MeanCrossCorrelogram(OperatorMixin):
         return ax
 
 @dataclass
-class CorrelationMatrix(OperatorMixin):
+class CoincidenceMatrix(OperatorMixin):
     """
-    Calculate correlation index matrix from the cross-correlograms.
+    Calculate coincidence index matrix from the cross-correlograms.
     (Gives you a matrix that tells you how correlated two channels/neurons/sensors/regions are)
     For more information see equations 2 and 3 on page 52 of [paper link]
 
@@ -353,12 +353,12 @@ class CorrelationMatrix(OperatorMixin):
         spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
         burst_filter: Operator = BurstsFilter()
         cross_correlogram: Operator = CrossCorrelograms()
-        correlation_matrix: Operator = CorrelationMatrix()
+        coincidence_matrix: Operator = CoincidenceMatrix()
         
         
         data >> spike_detection >> burst_filter >> cross_correlogram
-        spike_detection >> cross_correlogram >> correlation_matrix
-        Pipeline(correlation_matrix).run()
+        spike_detection >> cross_correlogram >> coincidence_matrix
+        Pipeline(coincidence_matrix).run()
 
     Parameters
     ----------
@@ -366,7 +366,7 @@ class CorrelationMatrix(OperatorMixin):
         Operator tag
     """
 
-    tag: str = "CI XY matrix"
+    tag: str = "coincidence matrix"
 
     def __post_init__(self):
         super().__init__()
@@ -451,21 +451,3 @@ class CorrelationMatrix(OperatorMixin):
         return ax
 
 
-if __name__ == "__main__":
-    from miv.core.operator import DataLoader
-    from miv.signal.spike import ThresholdCutoff
-    from miv.io.openephys import DataManager
-
-    # Example usage:
-    path = "D:/Globus"
-    dataset: DataManager = DataManager(data_collection_path=path)
-    for i in [0, 1, 2, 3, 4, 5, 6, 7, 8]:
-        data: DataLoader = dataset[i]
-        spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
-        CXY_matrix: Operator = CrossCorrelograms()
-        CI_XY_matrix: Operator = CorrelationMatrix()
-        burst_filter: Operator = BurstsFilter()
-
-        data >> spike_detection >> burst_filter
-        pipeline = Pipeline(burst_filter)
-        pipeline.run(working_directory="results/experiment" + str(i + 1))
