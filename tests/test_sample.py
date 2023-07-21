@@ -142,12 +142,15 @@ def test_example_usage2():
     for i in [] :
         data : DataLoader = dataset[i]
         spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
-        CXY_matrix: Operator = CrossCorrelograms()
-        CI_XY_matrix: Operator = CorrelationIndex() 
+        cross_correlogram: Operator = CrossCorrelograms()
+        correlation_matrix: Operator = CorrelationIndex() 
+        test_mean_cross_correlogram: Operator = MeanCrossCorrelogram()
         burst_filter: Operator = BurstsFilter()
         
-        data >> spike_detection >> burst_filter >> CXY_matrix
-        spike_detection >> CXY_matrix
-        CXY_matrix >> CI_XY_matrix
+        data >> spike_detection >> burst_filter >> cross_correlogram
+        spike_detection >> cross_correlogram
+        cross_correlogram >> CI_XY_matrix
         pipeline = Pipeline(CI_XY_matrix) 
         pipeline.run(working_directory="results/experiment" + str(i+1))
+
+        

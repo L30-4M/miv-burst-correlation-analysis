@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "miv-burst-correlation"
+version = "0.1.0"
+description = ""
+authors = ["Leo Maslov <maslov2@illinois.edu>", "Seung Hyun Kim <skim0119@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "miv_burst_correlation"}]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.12"
+miv-os = "^0.3.0.post11"
+pytest = "^7.4.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

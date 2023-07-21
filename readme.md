@@ -1,6 +1,6 @@
-# README
+# (MiV) Burst Correlation Analysis
 
-This README file provides an overview of the code implementation for the Paper: [Spike train correlations: A comparison of performance and complexity](https://www.sciencedirect.com/science/article/pii/S0006899306008018)
+In this repository, we aim to implement the correlation index matrix algorithm proposed by Chippalone et. al. (2006): [Spike train correlations: A comparison of performance and complexity](https://www.sciencedirect.com/science/article/pii/S0006899306008018).
 
 ## Pipeline
 
@@ -8,16 +8,35 @@ This README file provides an overview of the code implementation for the Paper: 
 data >> spike detection >> Burst Filter >> Cross Correlogram
         spike detection >>              >> Cross Correlogram
                                            Cross Correlogram >> Coincidence Index
-## Current Code
+
+## Installation
+
+To install the package, run the following command in your terminal:
+
+```
+pip install miv-burst-correlation
+```
+
+If user wants to install from source, they can clone the repository and run the following command in the root directory:
+
+```
+cd miv-burst-correlation
+pip install .
+```
+
+## Implemented Modules
 
 Currently three Operators are added:
 - BurstFilter
 - CrossCorrelograms
 - CorrelationIndex
+
 These three Operators do as followed:
 - Takes a signal of Spikestamps and throws out any Spikes that are not part of a burst.
 - Takes two signals consisting of Spikestamps (Xtrain and Ytrain respectively) and creates a cross correlogram matrix.
 - Takes a cross correlogram matrix and creates a Correlation index matrix
+
+> The analysis pipeline is developed as a plugin for the [MiV-OS](https://github.com/GazzolaLab/MiV-OS).
 
 ### Burst Detection
 
@@ -43,9 +62,8 @@ The spike sequence is examined, and spikes are considered part of a burst if the
 - The code computes the cross-correlogram coefficient, Cxy(0), by summing the values of Cxy(τ) over a time period of Δτ/2 centered at zero, where Δτ is the bin size (10 ms).
 Cxy(0) represents the center of the bin, so in an array of size 30, the indecies that represent that is 15 and 16
 
-## Nonsense Notes
+## Side Notes
 
-Please ignore the "Nonsense Notes" section as it does not provide any relevant information for the code implementation.
+> The `spike_detection` operator outputs a `Spikestamp` object, not a `neo.Spiketrain` or `np.array` as the documentation states.
 
-Note: The `spike_detection` operator outputs a `Spikestamp` object, not a `neo.Spiketrain` or `np.array` as the documentation states.
-Note2: `Spikestamp.select()` needs to be given as an array, not as an int, as it can select multiple channels.
+> `Spikestamp.select()` needs to be given as an array, not as an int, as it can select multiple channels.
