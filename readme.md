@@ -6,7 +6,7 @@ In this repository, we aim to implement the correlation index matrix algorithm p
 
 - Implementing what was presented in the paper follows the following pipeline:
 
-data >> spike detection >> Burst Filter(?) >> Cross Correlogram
+data >> spike detection >> Cross Correlogram
 
         spike detection >> Cross Correlogram >> Coincidence Index
 

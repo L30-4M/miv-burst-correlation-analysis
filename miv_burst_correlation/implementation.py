@@ -6,26 +6,26 @@ import os
 import pathlib
 from dataclasses import dataclass
 
-import neo
 import matplotlib.pyplot as plt
+import matplotlib.transforms as transforms
 import numpy as np
-import quantities as pq
-from tqdm import tqdm
+import neo
 
-from miv.core.operator import Operator, OperatorMixin
-from miv.core.pipeline import Pipeline
+from miv.core.operator import OperatorMixin
 from miv.core.wrapper import wrap_cacher
 from miv.core.datatype import Spikestamps
 from miv.visualization.event import plot_spiketrain_raster
-from miv.statistics.spiketrain_statistics import interspike_intervals, firing_rates
+from miv.statistics.spiketrain_statistics import firing_rates
+
 from miv.statistics.burst import burst_array
 
 # TODO: add aditional check for burst rate to be inbetween 3 and 25 spikes/s (maybe?)
-# TODO: Minor refactoring so code can work with arbitrary bins etc.
+# TODO: Minor refactoring so code can work with arbitrary bins etc. 
+#       (Probably make C_XY return the bin number, then other code can use it.) 
+#       (Alternatively make CI matrix and Mean matrix just use array dimensions.)
 # TODO: Rename all functions and file names to be more clear. Much here is temporary.
 # TODO: Implement visualizations from pages 44, 47
-# TODO: Should add histogram visualization of burst lens and durations.
-
+# TODO: Decide if BurstsFilter should return multiple things or just one. Likely best to keep singular until *kwargs is implemented.
 @dataclass
 class BurstsFilter(OperatorMixin):
     """
@@ -34,6 +34,7 @@ class BurstsFilter(OperatorMixin):
     Example usage code::
         spike_detection: Operator = ThresholdCutoff(cutoff=5.0, dead_time=0.003)
         burst_filter: Operator = BurstsFilter()
+        
         data >> spike_detection >> burst_filter
         Pipeline(burst_filter).run()
 
@@ -59,24 +60,24 @@ class BurstsFilter(OperatorMixin):
     min_isi: float = 0.1
     min_len: int = 10
 
-    burst_lens: List[int] = None
-    burst_durations: List[float] = None
-
     def __post_init__(self):
         super().__init__()
 
     @wrap_cacher(cache_tag="burst_filter")
     def __call__(self, spiketrains: Spikestamps):
-        erroneouscopy = spiketrains  # TODO: is this needs to be deep-copy?
-
+        import copy
+        self.allspikestamps = copy.deepcopy(spiketrains)
         burst_lens = []
         burst_durations = []
-        for i in range(spiketrains.number_of_channels):
-            Q = burst_array(spiketrains[i], self.min_isi, self.min_len)
-
+        chnls = spiketrains.number_of_channels
+        for i in range(chnls):
+            # TODO: REPLACE WITH Q = burst_array(spiketrains[i], self.min_isi, self.min_len)
+            # BELOW IS SUPER TEMP WHILE BURST ARRAY IS NOT INCLUDED
+            Q = burst_array(spiketrains, i, self.min_isi, self.min_len)
+            # ABOVE IS SUPER TEMP WHILE BURST ARRAY IS NOT INCLUDED
             spike = np.array(spiketrains[i])
             if np.sum(Q) != 0:
-                erroneouscopy.data[i] = np.concatenate(
+                spiketrains.data[i] = np.concatenate(
                     [spike[start: end + 1] for start, end in Q]
                 )
                 start_time = spike[Q[:, 0]]
@@ -85,9 +86,9 @@ class BurstsFilter(OperatorMixin):
                 burst_lens.append(Q[:, 1] - Q[:, 0] + 1)
                 burst_durations.append(end_time - start_time)
             else:
-                erroneouscopy.data[i] = []
+                spiketrains.data[i] = []
 
-        return erroneouscopy, np.asarray(burst_lens), np.asarray(burst_durations)
+        return spiketrains, np.asarray(burst_lens, dtype=object), np.asarray(burst_durations, dtype=object)
 
     def plot_bursttrain(
         self,
@@ -95,27 +96,71 @@ class BurstsFilter(OperatorMixin):
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ):
-        burst_spikestamps, burst_lens, burst_durations = outputs
+        spikestamps, burst_lens, burst_durations = outputs
 
-        t0 = burst_spikestamps.get_first_spikestamp()
-        tf = burst_spikestamps.get_last_spikestamp()
+        t0 = spikestamps.get_first_spikestamp()
+        tf = spikestamps.get_last_spikestamp()
 
         # Create a single plot with adjusted x-axis limits
-        fig, ax = plot_spiketrain_raster(burst_spikestamps, t0, tf)
+        fig, ax = plot_spiketrain_raster(spikestamps, t0, tf)
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel("Channel")
         if save_path is not None:
             plt.savefig(os.path.join(save_path, "burst_raster.png"))
 
         if show:
             plt.show()
-            plt.close("all")
         
         return ax
     
-    
-    def plot_firing_rate_histogram(self, spikestamps, show=False, save_path=None):
-        """Plot firing rate histogram"""
-        threshold = 3
+    def plot_overlay(
+        self,
+        outputs,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+        """
+        Plot spike train in raster
+        """
+        spikestamps = self.allspikestamps
+        burststamps, burst_lens, burst_durations = outputs
 
+        t0 = spikestamps.get_first_spikestamp()
+        tf = spikestamps.get_last_spikestamp()
+
+        # TODO: REFACTOR. Make single plot, and change xlim
+        term = 10
+        n_terms = int(np.ceil((tf - t0) / term))
+        if n_terms == 0:
+            # TODO: Warning message
+            return None
+        for idx in range(n_terms):
+            t_start = idx * term + t0
+            t_stop = min((idx + 1) * term + t0, tf)
+            fig, ax = plt.subplots(figsize=(16, 6))
+            spikes = spikestamps.get_view(t_start, t_stop)
+            bursts = burststamps.get_view(t_start, t_stop)
+            # Plot spikes as black dots
+            ax.eventplot(spikes)
+            ax.eventplot(bursts, colors="r")
+            ax.set_xlim(t_start, t_stop)
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Channel")
+            ax.set_title(f"Raster plot (from {t_start} to {t_stop})")
+            ax.set_xlim(t_start, t_stop)
+            if save_path is not None:
+                plt.savefig(os.path.join(save_path, f"overlay_raster_{idx:03d}.png"))
+            if not show:
+                plt.close("all")
+        if show:
+            plt.show()
+            plt.close("all")
+        return ax
+    
+    def plot_firing_rate_histogram(self, outputs, show=False, save_path=None):
+        """Plot firing rate histogram"""
+        
+        spikestamps, burst_lens, burst_durations = outputs
         rates = firing_rates(spikestamps)["rates"]
         hist, bins = np.histogram(rates, bins=20)
         logbins = np.logspace(
@@ -130,13 +175,6 @@ class BurstsFilter(OperatorMixin):
             linestyle="dashed",
             linewidth=1,
             label=f"Mean {np.mean(rates):.2f} Hz",
-        )
-        ax.axvline(
-            threshold,
-            color="g",
-            linestyle="dashed",
-            linewidth=1,
-            label="Quality Threshold",
         )
         ax.set_xscale("log")
         xlim = ax.get_xlim()
@@ -154,14 +192,17 @@ class BurstsFilter(OperatorMixin):
     # Visualization (probably?) based on what is shown on page 45
     def plot_length_vs_duration(
         self,
-        spikestamps,
+        outputs,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ) -> plt.Axes:
         
+        spikestamps, burst_lens, burst_durations = outputs
+        #burst_lens = self.burst_lens
+        #burst_durations = self.burst_durations
         fig, ax = plt.subplots()
-        for i in range(len(self.burst_lens)):
-            ax.scatter(self.burst_lens[i], self.burst_durations[i])
+        for i in range(len(burst_lens)):
+            ax.scatter(burst_lens[i], burst_durations[i])
         ax.set_xlabel('Burst length')
         ax.set_ylabel('Burst duration')
         
@@ -170,10 +211,127 @@ class BurstsFilter(OperatorMixin):
         
         if show:
             plt.show()
-            plt.close("all")
         
         return ax
 
+    def plot_burst_length_histogram(
+        self,
+        outputs,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+        
+        spikestamps, burst_lens, burst_durations = outputs
+        fig, ax = plt.subplots()
+        Histo = np.concatenate(burst_lens, axis=None)
+        # Another magic number that should TODO: be given logic
+        plt.hist(Histo, bins=20, edgecolor='black')
+        ax.set_xlabel("Burst length")
+        ax.set_ylabel("Count")
+        if save_path is not None:
+           plt.savefig(os.path.join(save_path, "burst_length_histogram.png"))
+        
+        if show:
+            plt.show()
+    
+        return ax
+
+    def plot_burst_duration_histogram(
+        self,
+        outputs,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:   
+        
+        spikestamps, burst_lens, burst_durations = outputs
+        dur = np.concatenate(burst_durations, axis=None)
+        hist, bins = np.histogram(dur, bins=20)
+        logbins = np.logspace(
+            np.log10(max(bins[0], 1e-3)), np.log10(bins[-1]), len(bins)
+        )
+        fig = plt.figure()
+        ax = plt.gca()
+        ax.hist(dur, bins=logbins, edgecolor='black')
+        ax.axvline(
+            np.mean(dur),
+            color="r",
+            linestyle="dashed",
+            linewidth=1,
+            label=f"Mean {np.mean(dur):.2f} s",
+        )
+        ax.set_xscale("log")
+        xlim = ax.get_xlim()
+        ax.set_xlabel("Burst Durations (s) (log-scale)")
+        ax.set_ylabel("Count")
+        # TODO: set_xlim should be changed possibly?
+        ax.set_xlim([min(xlim[0], 1e-1), max(1e2, xlim[1])])
+        ax.legend()
+        if save_path is not None:
+            fig.savefig(os.path.join(f"{save_path}", "burst_duration_histogram.png"))
+        if show:
+            plt.show()
+
+        return ax
+
+    def plot_burst_rate_histogram(
+        self,
+        outputs,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+          
+        spikestamps, burst_lens, burst_durations = outputs
+        temp = burst_lens/burst_durations
+        rates = np.concatenate(temp, axis=None)
+        hist, bins = np.histogram(rates, bins=20)
+        logbins = np.logspace(
+            np.log10(max(bins[0], 1e-3)), np.log10(bins[-1]), len(bins)
+        )
+        fig = plt.figure()
+        ax = plt.gca()
+        ax.hist(rates, bins=logbins, edgecolor='black')
+        ax.axvline(
+            np.mean(rates),
+            color="r",
+            linestyle="dashed",
+            linewidth=1,
+            label=f"Mean {np.mean(rates):.2f} Hz",
+        )
+        ax.set_xscale("log")
+        xlim = ax.get_xlim()
+        ax.set_xlabel("Burst Firing rate (Hz) (log-scale)")
+        ax.set_ylabel("Count")
+        ax.set_xlim([min(xlim[0], 1e-1), max(1e2, xlim[1])])
+        ax.legend()
+        if save_path is not None:
+            fig.savefig(os.path.join(f"{save_path}", "burst_rate_histogram.png"))
+        if show:
+            plt.show()
+
+        return ax
+    
+    def plot_burst_rate_histogram_alt(
+        self,
+        outputs,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ) -> plt.Axes:
+        
+        spikestamps, burst_lens, burst_durations = outputs
+        fig, ax = plt.subplots()
+        rates = burst_lens/burst_durations
+        Histo = np.concatenate(rates, axis=None)
+        plt.hist(Histo, bins=20, edgecolor='black')
+        ax.set_xlabel("Burst Firing rate (Hz)")
+        ax.set_ylabel("Count")
+        # Another magic number that should TODO: be given logic
+        if save_path is not None:
+           plt.savefig(os.path.join(save_path, "burst_rate_histogram_alt.png"))
+        
+        if show:
+            plt.show()
+    
+        return ax
 
 @dataclass
 class CrossCorrelograms(OperatorMixin):
@@ -217,6 +375,8 @@ class CrossCorrelograms(OperatorMixin):
     # TODO: If inputs are different than it should not use the same cache?
     @wrap_cacher(cache_tag="C_XY_matrix")
     def __call__(self, Xspikestamps, Yspikestamps):
+        if isinstance(Xspikestamps, tuple):
+            Xspikestamps = Xspikestamps[0]
         spiketimesMega = Xspikestamps.neo() # Extracts the spike times from Xspikestamps
 
         # Initializing constants 
@@ -246,7 +406,7 @@ class CrossCorrelograms(OperatorMixin):
 
             if(spikeQ == 0) : spikeQ = 1 # Avoiding divide by zero error.
             Ys_norm = np.rot90(Ys_binned/(spikeQ * self.binsize), -1) # Normalizing the binned data
-            if(self.keep_autocorr) : Ys_norm[X] = [0 for _ in range(self.binN)] # Throwing out autocorrelation
+            if(not self.keep_autocorr) : Ys_norm[X] = [0 for _ in range(self.binN)] # Throwing out autocorrelation
             C_XY[X] = Ys_norm # Updating the C_XY matrix with the normalized data
         return C_XY
 
@@ -257,9 +417,23 @@ class CrossCorrelograms(OperatorMixin):
     def plot_CXY(
         self,
         C_XY,
+        Chx: int = 0,
+        Chy: int = 0,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
-    ) : return None
+    ) : 
+        fig, ax = plt.subplots()
+        plt.plot(C_XY[Chx][Chy])
+        ax.set_xlabel('Times (ms)')
+        ax.set_ylabel('Spikes/s')
+
+        if save_path is not None:
+            plt.savefig(os.path.join(save_path, f"cross_correlogram{Chx}{Chy}.png"))
+        
+        if show:
+            plt.show()
+
+        return ax
 
 @dataclass
 class MeanCrossCorrelogram(OperatorMixin):
@@ -313,14 +487,11 @@ class MeanCrossCorrelogram(OperatorMixin):
         ax.set_xlabel('Channel')
         ax.set_ylabel('Time (ms)')
         ax.set_zlabel('Spikes/s')
-
-
         if save_path is not None:
             plt.savefig(os.path.join(save_path, "c_x_mean_3d.png"))
         
         if show:
             plt.show()
-            plt.close("all")
     
         return ax
     
@@ -331,15 +502,23 @@ class MeanCrossCorrelogram(OperatorMixin):
         save_path: Optional[pathlib.Path] = None,
     ) :
         fig, ax = plt.subplots()
-        plt.imshow(C_X, cmap='hot', interpolation='nearest')
-        plt.colorbar()
+        plt.imshow(C_X, cmap='hot', interpolation='none')
+        colorbar = plt.colorbar()
+        colorbar.set_label('Spikes/s')
+        ax.set_xlabel('Times (ms)')
+        ax.set_ylabel('Channel')
+        num_channels, num_time_points = C_X.shape
+        xticks_positions = np.linspace(0, num_time_points - 1, 5)
+        xticks_labels = np.linspace(-150, 150, 5).astype(int)
+        ax.set_xticks(xticks_positions)
+        ax.set_xticklabels(xticks_labels)
+
         if save_path is not None:
             plt.savefig(os.path.join(save_path, "c_x_mean_heatmap.png"))
         
         if show:
             plt.show()
-            plt.close("all")
-    
+
         return ax
 
 @dataclass
@@ -364,19 +543,32 @@ class CoincidenceMatrix(OperatorMixin):
     ----------
     tag : str
         Operator tag
+    deltaT : float
+        Time window for cross-correlograms
+    binsize : float
+        Bin size for binning the spikes in the cross-correlograms
+    
+    Attributes
+    ----------
+    binN : int
+        Number of bins in the correlation array
     """
 
     tag: str = "coincidence matrix"
+    deltaT: float = 0.15
+    binsize: float = 0.01
+    binN: float = round(2*(deltaT/binsize))
 
     def __post_init__(self):
         super().__init__()
 
     @wrap_cacher(cache_tag="CI_XY_matrix")
-    def __call__(self, C_XY, binN: int):
+    def __call__(self, C_XY):
         # Janky way of finding center bin(s). Low priority refactor.
+        binN = self.binN
         k = 1
-        mL = np.floor((binN-1)/2)
-        mR = np.ceil((binN-1)/2)
+        mL = int(np.floor((binN-1)/2))
+        mR = int(np.ceil((binN-1)/2))
         if(mL == mR) : k = 0.5
 
         C_XY = np.asarray(C_XY)
@@ -402,52 +594,90 @@ class CoincidenceMatrix(OperatorMixin):
         plt.colorbar()
         if save_path is not None:
            plt.savefig(os.path.join(save_path, f"ci_heatmap.png"))
-        
+        ax.set_xlabel('Channel')
+        ax.set_ylabel('Channel')
         if show:
             plt.show()
-            plt.close("all")
     
         return ax
 
     def plot_ci_scatter(
         self,
         CI_XY,
+        ax = None,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ):
-        fig, ax = plt.subplots()
+        if(ax == None) : fig, ax = plt.subplots()
         for i, sublist in enumerate(CI_XY):
             x_values = [i+1] * len(sublist)
             y_values = sublist
-            plt.scatter(x_values, y_values)
-    
+            ax.scatter(x_values, y_values)
+        ax.set_yscale('log')
+        ax.set_xlabel('Channel')
+        ax.set_ylabel('Correlation Index')
+        #max_val = np.max(CI_XY)
+        #plt.yticks(list(plt.yticks()[0]) + [max_val])
         if save_path is not None:
            plt.savefig(os.path.join(save_path, f"ci_scatter.png"))
         
         if show:
             plt.show()
-            plt.close("all")
     
         return ax
 
     def plot_ci_histogram(
         self,
         CI_XY,
+        ax = None,
         show: bool = False,
         save_path: Optional[pathlib.Path] = None,
     ):
-        fig, ax = plt.subplots()
+        if(ax == None) : fig, ax = plt.subplots()
         Histo = np.array(CI_XY).flatten()
         Histo = Histo[Histo != 0]
-        plt.hist(Histo, bins=500, edgecolor='black')
+        ax.hist(Histo, bins=500, edgecolor='black')
         # Another magic number that should TODO: be given logic
+        ax.set_xlabel('Correlation Index')
+        ax.set_ylabel('Count')
         if save_path is not None:
            plt.savefig(os.path.join(save_path, "ci_histogram.png"))
         
         if show:
             plt.show()
-            plt.close("all")
     
         return ax
+    
+    def plot_ci_combined(
+        self,
+        CI_XY,
+        show: bool = False,
+        save_path: Optional[pathlib.Path] = None,
+    ):
+        fig, (ax1, ax2) = plt.subplots(1, 2, gridspec_kw={'width_ratios': [1, 3]})
+
+        # Plot CI Scatter
+        self.plot_ci_scatter(CI_XY, ax2)  # Don't show the subplots here
+        ax2.set_yscale('log')
+        
+        # Plot CI Histogram
+        self.plot_ci_histogram(CI_XY, ax1)
+        counts = [patch.get_height() for patch in ax1.patches]
+        bins = [patch.get_x() for patch in ax1.patches]
+
+        # Clear the second axes
+        ax1.clear()
+
+        # Plot the histogram data on the second axes, swapping x and y
+        ax1.set_yscale('log')
+        ax1.set_xlabel('counts')
+        ax1.plot(counts, bins)
+        ax2.set_ylabel('')
+        ax1.set_ylabel('Correlation Index')
+        if save_path is not None:
+            plt.savefig(os.path.join(save_path, "ci_experiment.png"))
+        
+        if show:
+            plt.show()
 
 
