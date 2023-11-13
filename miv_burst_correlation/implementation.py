@@ -53,6 +53,10 @@ class BurstsFilter(OperatorMixin):
         List to store the burst lengths for each channel.
     burst_durations : list of float, optional
         List to store the burst durations for each channel.
+
+    Returns
+    ----------
+    spiketrain, burst lengths, burst durations
     """
 
     tag: str = "bursts filter"
@@ -73,7 +77,7 @@ class BurstsFilter(OperatorMixin):
         for i in range(chnls):
             # TODO: REPLACE WITH Q = burst_array(spiketrains[i], self.min_isi, self.min_len)
             # BELOW IS SUPER TEMP WHILE BURST ARRAY IS NOT INCLUDED
-            Q = burst_array(spiketrains, i, self.min_isi, self.min_len)
+            Q = burst_array(spiketrains[i], self.min_isi, self.min_len)
             # ABOVE IS SUPER TEMP WHILE BURST ARRAY IS NOT INCLUDED
             spike = np.array(spiketrains[i])
             if np.sum(Q) != 0:
